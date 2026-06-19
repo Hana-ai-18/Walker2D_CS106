@@ -1,0 +1,26 @@
+# Walker2D Multi-step DRL Experiment
+# Based on "Multi-step first" paper (Meng et al., Neural Networks 2026)
+# Python 3.10+
+
+# Core RL
+stable-baselines3>=2.0.0
+gymnasium>=0.29.0
+gymnasium[mujoco]
+
+# MuJoCo physics
+mujoco>=3.0.0
+
+# ML frameworks
+torch>=2.0.0
+numpy>=1.24.0
+
+# Data & plotting
+pandas>=2.0.0
+matplotlib>=3.7.0
+scipy>=1.10.0
+
+# Utilities
+tqdm>=4.65.0
+
+# Optional: video recording
+# moviepy>=1.0.3
