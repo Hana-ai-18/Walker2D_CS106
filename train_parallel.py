@@ -30,6 +30,7 @@ def run_single(task):
         "--total_steps", str(total_steps),
         "--results_dir", results_dir,
         "--models_dir", models_dir,
+        "--device", "cuda",
         "--verbose", "0",
     ]
 

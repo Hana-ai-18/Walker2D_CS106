@@ -27,7 +27,7 @@ ALGORITHMS   = {"PPO": None, "TD3": None, "SAC": None, "MTD3": None, "MSAC": Non
 
 TOTAL_TIMESTEPS = 2_500_000
 N_SEEDS         = 3
-N_EVAL_EPISODES = 5
+N_EVAL_EPISODES = 1
 EVAL_FREQ       = 5_000
 POLICY_KWARGS   = dict(net_arch=[256, 256])
 N_STEP          = 5
