@@ -229,18 +229,18 @@ def run_full_experiment(
     cur   = 0
     summary = {}
 
-    print(f"\n{'#'*65}")
-    print(f"# Walker2D Experiment — Logic theo paper (Meng et al. 2026)")
-    print(f"# Algorithms    : {algorithms}")
-    print(f"# Envs          : {env_types}")
-    print(f"# Seeds         : {seeds}")
-    print(f"# Total runs    : {total}")
-    print(f"# Steps/run     : {total_timesteps:,}")
-    print(f"# Device        : {device}")
-    print(f"# PPO           : {NUM_ENVS_PPO} envs SubprocVecEnv (speed only)")
-    print(f"# Off-policy    : 1 env, gradient_steps=1 (paper exact)")
-    print(f"# Eval episodes : {N_EVAL_EPISODES} (paper)")
-    print(f"{'#'*65}\n")
+    print("\n" + "="*65)
+    print(f"Walker2D Experiment — Logic theo paper (Meng et al. 2026)")
+    print(f"  Algorithms    : {algorithms}")
+    print(f"  Envs          : {env_types}")
+    print(f"  Seeds         : {seeds}")
+    print(f"  Total runs    : {total}")
+    print(f"  Steps/run     : {total_timesteps:,}")
+    print(f"  Device        : {device}")
+    print(f"  PPO           : {NUM_ENVS_PPO} envs SubprocVecEnv (speed only)")
+    print(f"  Off-policy    : 1 env, gradient_steps=1 (paper exact)")
+    print(f"  Eval episodes : {N_EVAL_EPISODES} (paper)")
+    print("="*65 + "\n")
 
     for env_type in env_types:
         for algo in algorithms:
