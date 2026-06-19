@@ -1,26 +1,22 @@
 """
-Parallel training - Windows safe, tối ưu cho 22 cores.
+Parallel training - Windows safe.
 
-Cách hoạt động:
-- n_workers experiments chạy song song (subprocess)
-- Mỗi PPO run: 4 envs bên trong (SubprocVecEnv)
-- Mỗi off-policy run: 1 env + gradient_steps=4
+Cả PPO lẫn off-policy đều dùng SubprocVecEnv (NUM_ENVS envs mỗi run).
+Mỗi run chiếm ~NUM_ENVS cores → n_workers tính theo đó.
 
-Với 22 cores:
-- n_workers=10: PPO chiếm 10×4=40 → quá nhiều
-- n_workers=5 : PPO chiếm 5×4=20 → vừa đủ 22 cores ✅
-- Off-policy   : 5×1=5 processes → nhẹ
+Với 22 cores, NUM_ENVS_OFF=4:
+  n_workers = (22 - 2) // 4 = 5 workers song song ✅
 """
 
 import os, sys, argparse, time, subprocess, glob
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from train import ENV_TYPES, ALGORITHMS, TOTAL_TIMESTEPS, NUM_ENVS_PPO
+from train import ENV_TYPES, ALGORITHMS, TOTAL_TIMESTEPS, NUM_ENVS_PPO, NUM_ENVS_OFF_POLICY, TRAIN_FREQ_OFF
 
 
 def run_single(task):
-    algo, env_type, seed, results_dir, models_dir, total_steps = task
+    algo, env_type, seed, results_dir, models_dir, total_steps, num_envs_off = task
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "train.py")
 
     cmd = [
@@ -32,6 +28,7 @@ def run_single(task):
         "--models_dir", models_dir,
         "--device", "cuda",
         "--verbose", "0",
+        "--num_envs_off", str(num_envs_off),
     ]
 
     print(f"  START → {algo:5} | {env_type:4} | seed={seed}")
@@ -40,7 +37,7 @@ def run_single(task):
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=28800)
         elapsed = time.time() - t0
         if r.returncode != 0:
-            print(f"  ERROR → {algo:5} | {env_type:4} | seed={seed} | {r.stderr[-150:]}")
+            print(f"  ERROR → {algo:5} | {env_type:4} | seed={seed}\n{r.stderr[-300:]}")
             return (algo, env_type, seed, False)
         print(f"  DONE  → {algo:5} | {env_type:4} | seed={seed} | {elapsed/60:.0f}m")
         return (algo, env_type, seed, True)
@@ -62,48 +59,42 @@ def get_pending(algorithms, env_types, seeds, results_dir):
                     skipped += 1
                 else:
                     if os.path.exists(f):
-                        os.remove(f)  # xóa file rỗng
+                        os.remove(f)
                     pending.append((algo, env_type, seed))
     return pending, skipped
 
 
-def optimal_workers(total_cores, num_envs_ppo):
-    """
-    Tính n_workers tối ưu:
-    - Khi PPO chạy: n_workers × num_envs_ppo processes
-    - Để lại 2 cores cho hệ thống
-    """
-    return max(1, (total_cores - 2) // num_envs_ppo)
-
-
 def run_parallel(algorithms, env_types, seeds,
                  results_dir="results", models_dir="models",
-                 total_steps=500_000, n_workers=None):
+                 total_steps=500_000, n_workers=None,
+                 num_envs_off=NUM_ENVS_OFF_POLICY):
 
     os.makedirs(results_dir, exist_ok=True)
     os.makedirs(models_dir,  exist_ok=True)
 
     pending, skipped = get_pending(algorithms, env_types, seeds, results_dir)
-    tasks = [(a, e, s, results_dir, models_dir, total_steps) for a, e, s in pending]
+    tasks = [(a, e, s, results_dir, models_dir, total_steps, num_envs_off)
+             for a, e, s in pending]
 
     total_cores = os.cpu_count()
     if n_workers is None:
-        n_workers = optimal_workers(total_cores, NUM_ENVS_PPO)
+        # Bottleneck = off-policy runs (NUM_ENVS_OFF_POLICY cores/run)
+        n_workers = max(1, (total_cores - 2) // num_envs_off)
 
-    # Ước tính thời gian
     import math
-    n_ppo    = sum(1 for a,_,_ in pending if a == "PPO")
+    n_ppo    = sum(1 for a, _, _ in pending if a == "PPO")
     n_others = len(pending) - n_ppo
-    # PPO với 4 envs + gradient_steps N/A: ~20 phút/500k steps
-    # Off-policy với gradient_steps=4: ~30 phút/500k steps
-    est_h = (math.ceil(n_ppo/n_workers) * 20 +
-             math.ceil(max(1,n_others)/n_workers) * 30) / 60 * (total_steps/500_000)
+    est_h    = (math.ceil(n_ppo    / n_workers) * 15 +
+                math.ceil(max(1, n_others) / n_workers) * 10) / 60 * (total_steps / 500_000)
 
+    eff = TRAIN_FREQ_OFF * num_envs_off
     print(f"\n{'#'*65}")
-    print(f"# Walker2D Parallel - OPTIMIZED for {total_cores} cores")
+    print(f"# Walker2D Parallel — {total_cores} cores")
     print(f"# n_workers          : {n_workers}")
-    print(f"# PPO/run            : {NUM_ENVS_PPO} envs → {n_workers}×{NUM_ENVS_PPO}={n_workers*NUM_ENVS_PPO} cores max")
-    print(f"# Off-policy/run     : 1 env + gradient_steps=4")
+    print(f"# PPO/run            : {NUM_ENVS_PPO} envs SubprocVecEnv")
+    print(f"# Off-policy/run     : {num_envs_off} envs SubprocVecEnv")
+    print(f"#   train_freq={TRAIN_FREQ_OFF} × {num_envs_off} envs = {eff} trans/update")
+    print(f"#   gradient_steps=-1 → auto={eff} → ratio 1:1 paper ✓")
     print(f"# Total tasks        : {len(algorithms)*len(env_types)*len(seeds)}")
     print(f"# Already done       : {skipped} (skip)")
     print(f"# Pending            : {len(tasks)}")
@@ -125,10 +116,10 @@ def run_parallel(algorithms, env_types, seeds,
             done += 1
             try:
                 a, e, s, ok = future.result()
-                (success if ok else failed).append((a,e,s))
+                (success if ok else failed).append((a, e, s))
             except Exception as ex_e:
                 t = futures[future]
-                failed.append((t[0],t[1],t[2]))
+                failed.append((t[0], t[1], t[2]))
             print(f"  [{done}/{len(tasks)} xong]")
 
     elapsed = time.time() - start
@@ -136,33 +127,33 @@ def run_parallel(algorithms, env_types, seeds,
     print(f"HOÀN THÀNH! {elapsed/3600:.1f} giờ | "
           f"Thành công: {len(success)}/{len(tasks)}")
     if failed:
-        for a,e,s in failed:
+        for a, e, s in failed:
             print(f"  FAIL: {a} {e} seed={s}")
     print(f"{'='*65}")
 
-    # Merge CSV
     import pandas as pd
-    csvs = [f for f in glob.glob(os.path.join(results_dir,"*.csv"))
+    csvs = [f for f in glob.glob(os.path.join(results_dir, "*.csv"))
             if "all_results" not in os.path.basename(f)
             and os.path.getsize(f) > 100]
     if csvs:
-        df = pd.concat([pd.read_csv(f,encoding='utf-8') for f in csvs], ignore_index=True)
+        df  = pd.concat([pd.read_csv(f) for f in csvs], ignore_index=True)
         out = os.path.join(results_dir, "all_results.csv")
-        df.to_csv(out, index=False, encoding='utf-8')
+        df.to_csv(out, index=False)
         print(f"\nMerged {len(csvs)} files → {out}")
-        print(f"Chạy: python plot_results.py")
+        print("Chạy: python plot_results.py")
 
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--total_steps", type=int, default=500_000)
-    p.add_argument("--n_seeds",     type=int, default=3)
-    p.add_argument("--n_workers",   type=int, default=None,
-                   help="Mặc định tự tính tối ưu theo số cores")
-    p.add_argument("--results_dir", type=str, default="results")
-    p.add_argument("--models_dir",  type=str, default="models")
-    p.add_argument("--algo",        type=str, default=None)
-    p.add_argument("--env_type",    type=str, default=None)
+    p.add_argument("--total_steps",  type=int, default=500_000)
+    p.add_argument("--n_seeds",      type=int, default=3)
+    p.add_argument("--n_workers",    type=int, default=None)
+    p.add_argument("--results_dir",  type=str, default="results")
+    p.add_argument("--models_dir",   type=str, default="models")
+    p.add_argument("--algo",         type=str, default=None)
+    p.add_argument("--env_type",     type=str, default=None)
+    p.add_argument("--num_envs_off", type=int, default=NUM_ENVS_OFF_POLICY,
+                   help="Số envs song song cho off-policy (default: 4)")
     return p.parse_args()
 
 
@@ -176,4 +167,5 @@ if __name__ == "__main__":
 
     run_parallel(algos, envs, seeds,
                  args.results_dir, args.models_dir,
-                 args.total_steps, args.n_workers)
+                 args.total_steps, args.n_workers,
+                 args.num_envs_off)
